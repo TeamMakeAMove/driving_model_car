@@ -13,6 +13,7 @@ import cv2, math
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from xycar_msgs.msg import xycar_motor
+from std_msgs.msg import Int32MultiArray
 from math import *
 import signal
 import sys
@@ -52,6 +53,10 @@ def img_callback(data):
         sub_f = 0
 
     image = bridge.imgmsg_to_cv2(data, "bgr8")
+
+def ultra_callback(data):
+    global ultra_msg
+    ultra_msg = data.data
 
 # publish xycar_motor msg
 def drive(Angle, Speed): 
@@ -264,9 +269,6 @@ def pid_angle(ITerm, error, b_angle, b_error, Cnt):
             # if Kd high -> decrease overshoot but when the signal changes rapidly
             # it can make the system destroy
     dt = 1
-    
-    # 속도 높이면 PID 제어 다시 해줘야 하는데 정착시간까지 반응이 안 일어나기 때문에
-    # I 제어기가 필요하지 않음 -> PD 제어기 사용하는 경우 많음.
 
     PTerm = Kp * error
     ITerm += Ki * error * dt
@@ -286,6 +288,9 @@ def start():
     rospy.init_node('auto_drive')
     motor = rospy.Publisher('xycar_motor', xycar_motor, queue_size=1)
 
+    rospy.Subscriber("xycar_ultrasonic", Int32MultiArray, ultra_callback)
+
+
     image_sub = rospy.Subscriber("/usb_cam/image_raw/",Image,img_callback)
     print("---------- Xycar C1 HD v1.0 ----------")
     time.sleep(3)
@@ -297,10 +302,11 @@ def start():
     p_angle = 0
     flag = 0
     line_count = 0
+    avoid_time =time.time() + 3.8
     b_angle = 0
     b_error = 0
     ITerm = 0
-    Cnt = 0
+    Opt = 0
     if cam_record:
         fourcc = cv2.VideoWriter_fourcc(*'DIVX')
         path = '/home/pi/xycar_ws/src/base/cam_record'
@@ -318,26 +324,102 @@ def start():
             f_n = 0
         if cam_record:
             out.write(image)
-        draw_img = image.copy()
+        draw_img = image.copy()  
         lpos, rpos, go = process_image(draw_img)
+        diff = rpos-lpos
+    
+
+        # if diff > 135 and diff < 142:
+        #     print("cam_straight")
+        # else:
+        #     print("cam_curve")
+
         
         if(lpos == 0):
-            print("lpos error")
-            lpos=rpos-160
-        if(rpos > lpos+160):
-            print("rpos error")
-            rpos=lpos+160
+       #     print("lpos error")
+            lpos=rpos-130
+        if(rpos > lpos+145):
+       #     print("rpos error")
+            rpos=lpos+130
 
         center = (lpos + rpos) / 2
         
-        print(lpos, rpos, center, rpos-lpos)
+       # print(lpos, rpos, center, diff)
         # angle = -(Width/2 - center)
         error = (center - Width/2)
-        angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Cnt)
+        angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Opt)
 
 #        if lpos == 0 and rpos == 320:
 #            angle = 70
 #            drive(angle, 5)
+        
+        
+ 
+##################  avoid car
+                        
+        if time.time() > avoid_time and Opt == 0:
+            Opt = 1
+            print("------------------------CNT: ",Opt)
+            print("------------------------CNT: ",Opt)
+            print(ultra_msg)
+
+        if (ultra_msg[2] < 75 or ultra_msg[1] < 60) and Opt == 1:
+            print(ultra_msg)
+            Opt = 2
+            print("------------------------CNT: ",Opt)
+            
+  #                 avoid_drive_right()
+            max_time_end = time.time() + 0.5
+            while True:
+                drive(70,21)
+                if time.time() > max_time_end:
+                    break
+            print('1')
+  
+            # max_time_end = time.time() + 0.48 #start(True)
+            # while True:
+            #     drive(70,21)
+            #     if time.time() > max_time_end:
+            #          break
+            # print('2')
+            
+            max_time_end = time.time() + 0.5  # changed line and to be stable
+            while True:
+                drive(-50,19)
+                if time.time() > max_time_end:
+                    break
+            turn_right = time.time() + 1.3
+            print('3')
+            print(ultra_msg)
+
+        if ultra_msg[3] >100 and Opt == 2 and time.time() > turn_right :
+            max_time_end = time.time() + 0.6    #go back to the line
+            while True:
+                drive(-45,18)
+                if time.time() > max_time_end:
+                    break
+            print('4')
+            
+            max_time_end = time.time() + 0.5    #go back to the line
+            while True:
+                drive(50,19)
+                if time.time() > max_time_end:
+                    break   
+            print('5')
+            
+            Opt = 3
+            continue
+
+        
+################## 
+
+        if Opt == 3:
+            ang = angle * 0.8
+            drive(angle,22)
+        else:
+            drive(angle, 21)
+        
+
 
         steer_angle = angle * 0.4
         draw_steer(steer_angle)
