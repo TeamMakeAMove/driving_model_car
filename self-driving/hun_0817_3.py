@@ -41,6 +41,28 @@ cam_debug = True
 sub_f = 0
 time_c = 0
 
+def stop(all_lines, flag, line_count, stop_time):#정지선 인식 함수
+    line_len = all_lines
+    print("all_lines",line_len)
+    # 49
+    # flag: 0 이면 나오게 함
+    if (line_count == 1) and (line_len > 30): #출발후 1바퀴 돌고-> 1번째 바퀴 완주전 2번-> 2번째 바퀴 인식하고 정지
+        flag = 0
+        line_count = 2
+        return line_count, flag, stop_time
+    
+    if (line_len > 30): #출발후  1바퀴 돌고
+        flag = 1
+        line_count = 1
+        print("flag up")
+        print("flag up")
+        stop_time = time.time() + 10.5
+        print("stop_time:", stop_time, " time:", time.time())
+        
+
+
+    return line_count, flag, stop_time
+
 def img_callback(data):
     global image   
     global sub_f 
@@ -54,14 +76,10 @@ def img_callback(data):
 
     image = bridge.imgmsg_to_cv2(data, "bgr8")
 
-def ultra_callback(data):
-    global ultra_msg
-    ultra_msg = data.data
-
 # publish xycar_motor msg
 def drive(Angle, Speed): 
     global motor
-
+    # print("Angle:", Angle, "Speed:", Speed)
     motor_msg = xycar_motor()
     motor_msg.angle = Angle
     motor_msg.speed = Speed
@@ -227,10 +245,28 @@ def process_image(frame):
         # draw rectangle
         frame = draw_rectangle(frame, lpos, rpos, offset=Offset)
         frame = cv2.rectangle(frame, (0, Offset), (int(Width), Offset+Gap), (255, 202, 204), 2)
+        frame = cv2.rectangle(frame, (int(Width / 2) - 70, 120), (int(Width / 2) - 15, 160), (100, 150, 200), 2)
 
     img = frame        
 
-    return lpos, rpos, True
+    return lpos, rpos, len(all_lines), is_front_car(gray)
+
+def is_front_car(image_gray):
+    is_car = False
+    image_gray = image_gray[120 : 160, int(Width / 2) - 70 : int(Width / 2) - 15]
+    blur = cv2.GaussianBlur(image_gray, ksize=(5, 5), sigmaX=0)
+    edged = cv2.Canny(blur, 10, 250)
+    cv2.imshow('edged', edged)
+    
+    white_count = 0
+    for y_pixel in range(0, edged.shape[1]):
+            for x_pixel in range(0, edged.shape[0]):
+                if (edged[x_pixel, y_pixel] == 255):
+                    white_count = white_count + 1
+    #print("whitecount:", white_count)
+    if white_count >= 380:
+        is_car = True
+    return is_car
 
 def draw_steer(steer_angle):
     global Width, Height, img
@@ -262,7 +298,7 @@ def draw_steer(steer_angle):
 
 def pid_angle(ITerm, error, b_angle, b_error, Cnt):
     angle = 0
-    Kp = 0.92 #0.5 good / if Kp high -> loss decrease+faster respone but incur overshoot
+    Kp = 0.925 #0.5 good / if Kp high -> loss decrease+faster respone but incur overshoot
     Ki = 0.00065 #0.0001 good #0.0002 / if Ki high 
     #-> accumulated loss increase faster+faster response but incur overshoot
     Kd = 0.0925 #1.0 good #2.0/ decrease the vibration
@@ -288,25 +324,27 @@ def start():
     rospy.init_node('auto_drive')
     motor = rospy.Publisher('xycar_motor', xycar_motor, queue_size=1)
 
-    rospy.Subscriber("xycar_ultrasonic", Int32MultiArray, ultra_callback)
-
-
     image_sub = rospy.Subscriber("/usb_cam/image_raw/",Image,img_callback)
     print("---------- Xycar C1 HD v1.0 ----------")
     time.sleep(3)
 
     #sq = rospy.Rate(30)
-
+    stage = 0
     t_check = time.time()
     f_n = 0
     p_angle = 0
     flag = 0
     line_count = 0
     avoid_time =time.time() + 3.8
+    before_start = time.time() + 1
+    stop_time = time.time() + 12.5 + 1
+    speed_time = 0
     b_angle = 0
     b_error = 0
     ITerm = 0
     Opt = 0
+    speed = 0
+
     if cam_record:
         fourcc = cv2.VideoWriter_fourcc(*'DIVX')
         path = '/home/pi/xycar_ws/src/base/cam_record'
@@ -317,6 +355,11 @@ def start():
         while not image.size == (Width*Height*3):
             continue
 
+        if time.time() < before_start:
+            drive(0, 0)
+            #print("before start")
+            continue
+
         f_n += 1
         if (time.time() - t_check) > 1:
             #print("fps : ", f_n)
@@ -324,108 +367,137 @@ def start():
             f_n = 0
         if cam_record:
             out.write(image)
-        draw_img = image.copy()  
-        lpos, rpos, go = process_image(draw_img)
-        diff = rpos-lpos
-    
+        draw_img = image.copy()
+        try:
+            lpos, rpos, len_all_lines, is_front = process_image(draw_img)
+        except:
+            lpos, rpos, is_front = process_image(draw_img)
 
-        # if diff > 135 and diff < 142:
-        #     print("cam_straight")
-        # else:
-        #     print("cam_curve")
+        if time.time() > stop_time:
+            # print("stop_time", stop_time)
+            line_count, flag, stop_time = stop(len_all_lines, flag, line_count, stop_time)
+            # print("stop_time", stop_time)
+         #stop
+        if (line_count==2):# 라인 카운트 2개시 정지 
+            drive(0,0)
+            cv2.waitKey(0)
+            line_count = 0
+            exit()
+        if is_front and stage == 0:
+            stage = 1
+            print("last angle:", b_angle)
+            max_time_end = time.time() + 0.975
+            while True:
+                drive(-100, 14)
+                if time.time() > max_time_end:
+                    break
+            
+            #break
+            max_time_end = time.time() + 0.95
+            while True:
+                drive(100, 10)
+                if time.time() > max_time_end:
+                    break
+            
+            stage_time = time.time() + 1.5
+        if stage == 1 and time.time() > stage_time:
+            stage = 2
+            
+            max_time_end = time.time() + 0.7 #start(True)
+            while True:
+                drive(100, 15)
+                if time.time() > max_time_end:
+                     break
+            
+            max_time_end = time.time() + 0.95    #go back to the line
+            while True:
+                drive(-100, 8)
+                if time.time() > max_time_end:
+                    break
+            speed_time = time.time() + 1.5
+  
 
-        
+            # max_time_end = time.time() + 0.5 
+            # while True:
+            #     drive(0, 21)
+            #     if time.time() > max_time_end:
+            #         break
+
+
+            # max_time_end = time.time() + 0.9 #start(True)
+            # while True:
+            #     drive(-85, 10)
+            #     if time.time() > max_time_end:
+            #          break
+            
+            # max_time_end = time.time() + 0.6    #go back to the line
+            # while True:
+            #     drive(50, 10)
+            #     if time.time() > max_time_end:
+            #         break
+            # speed_time = time.time() + 5          
+
+            # max_time_end = time.time() + 0.1  # changed line and to be stable
+            # while True:
+            #     drive(60, 21)
+            #     if time.time() > max_time_end:
+            #         break
+                    
+                
+            #break
+
+            # max_time_end = time.time() + 0.1  # changed line and to be stable
+            # while True:
+            #     drive(0, 22)
+            #     if time.time() > max_time_end:
+            #         print("b_angle:", b_angle, "b_error:", b_error)
+            #         b_angle = 0
+            #         b_error = 0
+            #         break
+            # turn_right = time.time() + 0.1
+            
+            # max_time_end = time.time() + 0.35    #go back to the line
+            # while True:
+            #     drive(-100, 28)
+            #     if time.time() > max_time_end:
+            #         break
+
+
         if(lpos == 0):
-       #     print("lpos error")
+            #print("lpos error")
             lpos=rpos-130
         if(rpos > lpos+145):
-       #     print("rpos error")
+            #print("rpos error")
             rpos=lpos+130
 
         center = (lpos + rpos) / 2
         
-       # print(lpos, rpos, center, diff)
-        # angle = -(Width/2 - center)
         error = (center - Width/2)
         angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Opt)
-
-#        if lpos == 0 and rpos == 320:
-#            angle = 70
-#            drive(angle, 5)
-        
-        
- 
-##################  avoid car
-                        
-        if time.time() > avoid_time and Opt == 0:
-            Opt = 1
-            print("------------------------OPT: ",Opt)
-            print(f'Opt :{Opt}, left :{ultra_msg[1]}, center: {ultra_msg[2]}')
-            
-        if (ultra_msg[2] < 75 or ultra_msg[1] < 60) and Opt == 1:
-            Opt = 2
-            print(f'Opt :{Opt}, left :{ultra_msg[1]}, center: {ultra_msg[2]}')
-            
-  #                 avoid_drive_right()
-            max_time_end = time.time() + 0.3
-            while True:
-                drive(70,23)
-                if time.time() > max_time_end:
-                    break
-            print(f'Opt :{Opt}, step: 1,  left :{ultra_msg[1]}, center: {ultra_msg[2]}')
-
-            max_time_end = time.time() + 0.4 #start(True)
-            while True:
-                drive(-70,21)
-                if time.time() > max_time_end:
-                     break
-            print(f'Opt :{Opt}, step: 2,  left :{ultra_msg[1]}, center: {ultra_msg[2]}')
-
-            max_time_end = time.time() + 0.2  # changed line and to be stable
-            while True:
-                drive(-85,25)
-                if time.time() > max_time_end:
-                    break
-            print(f'Opt :{Opt}, step: 3,  left :{ultra_msg[1]}, center: {ultra_msg[2]}')
-            turn_right = time.time() + 0.1
-
-        if ultra_msg[1] >1 and Opt == 2 and time.time() > turn_right :
-            print(f'Opt :{Opt}, step: 4,  left :{ultra_msg[1]}, center: {ultra_msg[2]}')
-            
-            max_time_end = time.time() + 0.25    #go back to the line
-            while True:
-                drive(-100,28)
-                if time.time() > max_time_end:
-                    break
-            print(f'Opt :{Opt}, step: 5,  left :{ultra_msg[1]}, center: {ultra_msg[2]}')
-            
-            # max_time_end = time.time() + 0.2    #go back to the line
-            # while True:
-            #     drive(50,21)
-            #     if time.time() > max_time_end:
-            #         break   
-            
-            Opt = 3
-            continue
-
-        
-################## 
-
-        if Opt == 3:
-            ang = angle * 0.8
-            drive(angle,22)
-        else:
-            drive(angle, 21)
-        
 
 
         steer_angle = angle * 0.4
         draw_steer(steer_angle)
 
-        drive(angle, 22)
+        if(stage == 1 or time.time() < speed_time):
+            speed = 3.8
+        elif(stage == 0):
+            # 장애물 회피 전
+            #print("before avoid car")
+            speed = 22
+            #print("low speed")
+        elif angle < -17.5 or angle > 17.5:
+            speed = 23
+            # print("angle:", angle, "speed:", speed, "car_curve")
+        else:
+            speed = 31.5
+            # print("angle:", angle, "speed", speed, "car_straight")
+
+        drive(angle, speed)
             
         cv2.waitKey(1)
         #sq.sleep()
+        #print(f"b_angle:{b_angle}, b_error:{b_error}")
         b_angle =angle
         b_error = error
 
