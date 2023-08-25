@@ -211,22 +211,6 @@ def process_image(frame):
     gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
     roi = gray[Offset : Offset+Gap, 0 : Width]
 
-    # define range of blue color in HSV
-    # lower_blue = np.array([100,100,120])          # 파랑색 범위
-    # upper_blue = np.array([150,255,255])
-
-    # lower_green = np.array([50, 150, 50])        # 초록색 범위
-    # upper_green = np.array([80, 255, 255])
-
-    lower_red = np.array([150, 50, 50])        # 빨강색 범위
-    upper_red = np.array([180, 255, 255])
-
-    # Threshold the HSV image to get only blue colors
-    #mask = cv2.inRange(gray, lower_blue, upper_blue)     # 110<->150 Hue(색상) 영역을 지정.
-    #mask1 = cv2.inRange(gray, lower_green, upper_green)  # 영역 이하는 모두 날림 검정. 그 이상은 모두 흰색 두개로 Mask를 씌움.
-    if cv2.inRange(gray, lower_red, upper_red):
-        stop()
-
     # blur
     kernel_size = 5
     standard_deviation_x = 3    #Kernel standard deviation along X-axis
@@ -373,7 +357,7 @@ def start():
 
         if time.time() < before_start:
             drive(0, 0)
-            #print("before start")
+            print("before start")
             continue
 
         f_n += 1
@@ -419,13 +403,13 @@ def start():
         if stage == 1 and time.time() > stage_time:
             stage = 2
             
-            max_time_end = time.time() + 0.725 #start(True)
+            max_time_end = time.time() + 0.7 #start(True)
             while True:
                 drive(100, 15)
                 if time.time() > max_time_end:
                      break
             
-            max_time_end = time.time() + 0.975    #go back to the line
+            max_time_end = time.time() + 0.95    #go back to the line
             while True:
                 drive(-100, 8)
                 if time.time() > max_time_end:

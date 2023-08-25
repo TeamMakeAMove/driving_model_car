@@ -35,11 +35,29 @@ Height = 240
 Offset = 160
 Gap = 60
 
+Offset2 = 10
+Gap2 = 100
+Width2 = 90
+
 cam = False
 cam_debug = True
 
 sub_f = 0
 time_c = 0
+
+
+# define range of blue color in HSV
+lower_blue = np.array([100,100,120])          # 파랑색 범위
+upper_blue = np.array([150,255,255])
+
+lower_green = np.array([50, 150, 50])        # 초록색 범위
+upper_green = np.array([80, 255, 255])
+
+lower_red = np.array([150, 50, 50])        # 빨강색 범위
+upper_red = np.array([180, 255, 255])
+
+lower_yellow = np.array([20,0,0])        # Yellow
+upper_yellow = np.array([40,255,255])
 
 def stop(all_lines, flag, line_count, stop_time):#정지선 인식 함수
     line_len = all_lines
@@ -210,23 +228,6 @@ def process_image(frame):
     # gray
     gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
     roi = gray[Offset : Offset+Gap, 0 : Width]
-
-    # define range of blue color in HSV
-    # lower_blue = np.array([100,100,120])          # 파랑색 범위
-    # upper_blue = np.array([150,255,255])
-
-    # lower_green = np.array([50, 150, 50])        # 초록색 범위
-    # upper_green = np.array([80, 255, 255])
-
-    lower_red = np.array([150, 50, 50])        # 빨강색 범위
-    upper_red = np.array([180, 255, 255])
-
-    # Threshold the HSV image to get only blue colors
-    #mask = cv2.inRange(gray, lower_blue, upper_blue)     # 110<->150 Hue(색상) 영역을 지정.
-    #mask1 = cv2.inRange(gray, lower_green, upper_green)  # 영역 이하는 모두 날림 검정. 그 이상은 모두 흰색 두개로 Mask를 씌움.
-    if cv2.inRange(gray, lower_red, upper_red):
-        stop()
-
     # blur
     kernel_size = 5
     standard_deviation_x = 3    #Kernel standard deviation along X-axis
@@ -261,11 +262,12 @@ def process_image(frame):
         # draw rectangle
         frame = draw_rectangle(frame, lpos, rpos, offset=Offset)
         frame = cv2.rectangle(frame, (0, Offset), (int(Width), Offset+Gap), (255, 202, 204), 2)
-        frame = cv2.rectangle(frame, (int(Width / 2) - 70, 120), (int(Width / 2) - 15, 160), (100, 150, 200), 2)
+        #frame = cv2.rectangle(frame, (int(Width / 2) - 70, 120), (int(Width / 2) - 15, 160), (100, 150, 200), 2)
+        frame = cv2.rectangle(frame, (20, Offset2), (int(Width2), Offset2+Gap2), (255, 202, 204), 2)
 
     img = frame        
 
-    return lpos, rpos, len(all_lines), is_front_car(gray)
+    return lpos, rpos, len(all_lines)
 
 def is_front_car(image_gray):
     is_car = False
@@ -331,6 +333,9 @@ def pid_angle(ITerm, error, b_angle, b_error, Cnt):
 
     return angle, ITerm
 
+def detect_color(mask,draw_img ):
+    return cv2.bitwise_and(draw_img,draw_img, mask= mask)
+
 def start():
     global motor
     global image
@@ -378,107 +383,24 @@ def start():
 
         f_n += 1
         if (time.time() - t_check) > 1:
-            #print("fps : ", f_n)
             t_check = time.time()
             f_n = 0
         if cam_record:
             out.write(image)
         draw_img = image.copy()
         try:
-            lpos, rpos, len_all_lines, is_front = process_image(draw_img)
+            lpos, rpos, len_all_lines = process_image(draw_img)
         except:
-            lpos, rpos, is_front = process_image(draw_img)
+            lpos, rpos = process_image(draw_img)
 
-        if time.time() > stop_time:
-            # print("stop_time", stop_time)
-            line_count, flag, stop_time = stop(len_all_lines, flag, line_count, stop_time)
-            # print("stop_time", stop_time)
-         #stop
-        if (line_count==2):# 라인 카운트 2개시 정지 
-            drive(0,0)
-            cv2.waitKey(0)
-            line_count = 0
-            exit()
-        if is_front and stage == 0:
-            stage = 1
-            print("last angle:", b_angle)
-            max_time_end = time.time() + 0.975
-            while True:
-                drive(-100, 14)
-                if time.time() > max_time_end:
-                    break
-            
-            #break
-            max_time_end = time.time() + 0.95
-            while True:
-                drive(100, 10)
-                if time.time() > max_time_end:
-                    break
-            
-            stage_time = time.time() + 1.5
-        if stage == 1 and time.time() > stage_time:
-            stage = 2
-            
-            max_time_end = time.time() + 0.725 #start(True)
-            while True:
-                drive(100, 15)
-                if time.time() > max_time_end:
-                     break
-            
-            max_time_end = time.time() + 0.975    #go back to the line
-            while True:
-                drive(-100, 8)
-                if time.time() > max_time_end:
-                    break
-            speed_time = time.time() + 1.5
-  
+          # color
+        hsv = cv2.cvtColor(draw_img,cv2.COLOR_BGR2HSV)
 
-            # max_time_end = time.time() + 0.5 
-            # while True:
-            #     drive(0, 21)
-            #     if time.time() > max_time_end:
-            #         break
-
-
-            # max_time_end = time.time() + 0.9 #start(True)
-            # while True:
-            #     drive(-85, 10)
-            #     if time.time() > max_time_end:
-            #          break
-            
-            # max_time_end = time.time() + 0.6    #go back to the line
-            # while True:
-            #     drive(50, 10)
-            #     if time.time() > max_time_end:
-            #         break
-            # speed_time = time.time() + 5          
-
-            # max_time_end = time.time() + 0.1  # changed line and to be stable
-            # while True:
-            #     drive(60, 21)
-            #     if time.time() > max_time_end:
-            #         break
-                    
-                
-            #break
-
-            # max_time_end = time.time() + 0.1  # changed line and to be stable
-            # while True:
-            #     drive(0, 22)
-            #     if time.time() > max_time_end:
-            #         print("b_angle:", b_angle, "b_error:", b_error)
-            #         b_angle = 0
-            #         b_error = 0
-            #         break
-            # turn_right = time.time() + 0.1
-            
-            # max_time_end = time.time() + 0.35    #go back to the line
-            # while True:
-            #     drive(-100, 28)
-            #     if time.time() > max_time_end:
-            #         break
-
-
+        roi2 = hsv[Offset2 : Offset2+Gap2, 20 : Width2]
+        ## traffic light
+        
+ 
+        
         if(lpos == 0):
             #print("lpos error")
             lpos=rpos-130
@@ -491,26 +413,41 @@ def start():
         error = (center - Width/2)
         angle, ITerm = pid_angle(ITerm, error, b_angle, b_error, Opt)
 
-
         steer_angle = angle * 0.4
         draw_steer(steer_angle)
+        
+        red_mask= cv2.inRange(roi2, lower_red, upper_red)
+        green_mask= cv2.inRange(roi2, lower_green, upper_green)
+        
+        
+        if green_mask is not None:
+            print("green is found")
+            speed = 10
 
-        if(stage == 1 or time.time() < speed_time):
-            speed = 3.8
-        elif(stage == 0):
-            # 장애물 회피 전
-            #print("before avoid car")
-            speed = 22
-            #print("low speed")
-        elif angle < -17.5 or angle > 17.5:
-            speed = 23
-            # print("angle:", angle, "speed:", speed, "car_curve")
-        else:
-            speed = 31.5
-            # print("angle:", angle, "speed", speed, "car_straight")
-
-        drive(angle, speed)
+        elif red_mask is not None:
+            print("red is found")
+            speed = 0
+        
+        
+        # if stage == 0:
+        #     drive(angle, speed)
             
+        
+        # if stage == 0 and red_mask is not None:
+        #     print("red is found")
+        #     max_time_end = time.time() + 3 #start(True)
+        #     while True:
+        #         drive(0, 0)
+        #         if time.time() > max_time_end:
+        #             stage = 1
+        #             break
+
+        # if stage == 1 and green_mask is not None:
+        #     print("green is found")
+        #     drive(angle, 10)
+        #     stage = 0
+        drive(angle, speed)
+        
         cv2.waitKey(1)
         #sq.sleep()
         #print(f"b_angle:{b_angle}, b_error:{b_error}")
